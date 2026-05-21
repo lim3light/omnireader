@@ -1,0 +1,6 @@
+{
+  "name": "OmniReader",
+  "description": "A modular manga, comic, and webtoon reader platform with offline downloads, dynamic sources, custom categorization, progress tracking, and beautiful material design.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
