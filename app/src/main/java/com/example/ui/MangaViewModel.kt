@@ -37,6 +37,30 @@ class MangaViewModel(application: Application) : AndroidViewModel(application) {
     val extensionsList: StateFlow<List<ExtensionEntity>> = repository.allExtensions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val _repoSyncMessage = MutableStateFlow<String?>(null)
+    val repoSyncMessage: StateFlow<String?> = _repoSyncMessage.asStateFlow()
+
+    private val _isSyncingRepo = MutableStateFlow(false)
+    val isSyncingRepo: StateFlow<Boolean> = _isSyncingRepo.asStateFlow()
+
+    fun syncExtensionRepository(url: String) {
+        viewModelScope.launch {
+            _isSyncingRepo.value = true
+            _repoSyncMessage.value = "Connecting to repository..."
+            val result = repository.addExtensionStoreRepository(url)
+            if (result >= 0) {
+                _repoSyncMessage.value = "Sync Complete! Loaded $result available extensions into the store catalog."
+            } else {
+                _repoSyncMessage.value = "Failed to sync. Please verify the URL and network connection."
+            }
+            _isSyncingRepo.value = false
+        }
+    }
+
+    fun clearRepoSyncMessage() {
+        _repoSyncMessage.value = null
+    }
+
     fun installExtension(id: String, install: Boolean) {
         viewModelScope.launch {
             repository.toggleExtensionInstalled(id, install)

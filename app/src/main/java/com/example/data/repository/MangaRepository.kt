@@ -11,6 +11,19 @@ class MangaRepository(private val db: AppDatabase) {
     private val pluginManager = PluginManager()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    private suspend fun getPlugin(id: String): com.example.domain.SourcePlugin? = withContext(Dispatchers.IO) {
+        val existing = pluginManager.getPlugin(id)
+        if (existing != null) return@withContext existing
+        
+        val activeExt = db.extensionDao().getAllExtensionsSync().firstOrNull { it.id == id && it.isInstalled }
+        if (activeExt != null) {
+            val dynamicPlugin = com.example.data.plugins.DynamicSourcePlugin(activeExt.id, activeExt.name, activeExt.version)
+            pluginManager.registerPlugin(dynamicPlugin)
+            return@withContext dynamicPlugin
+        }
+        null
+    }
+
     // --- Extensions Management ---
     val allExtensions: Flow<List<ExtensionEntity>> = db.extensionDao().getAllExtensions()
 
@@ -28,13 +41,56 @@ class MangaRepository(private val db: AppDatabase) {
         db.extensionDao().updateActiveStatus(id, isActive)
     }
 
+    suspend fun addExtensionStoreRepository(url: String): Int = withContext(Dispatchers.IO) {
+        try {
+            val jsonStr = java.net.URL(url).readText()
+            val jsonArray = org.json.JSONArray(jsonStr)
+            val parsedList = mutableListOf<ExtensionEntity>()
+            
+            // Get already existing extensions so we don't overwrite installed ones to be uninstalled
+            val existing = db.extensionDao().getAllExtensionsSync()
+            
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val rawName = obj.optString("name") ?: ""
+                val name = rawName.replace("Tachiyomi: ", "").replace("Mihon: ", "").trim()
+                val pkg = obj.optString("pkg") ?: ""
+                val version = obj.optString("version") ?: "1.0.0"
+                val lang = obj.optString("lang") ?: "en"
+                val nsfw = obj.optInt("nsfw", 0) == 1
+                
+                val cleanName = if (nsfw) "$name (18+)" else name
+                val idForDb = pkg
+                
+                val isAlreadyInstalled = existing.any { it.id == idForDb && it.isInstalled }
+                val isAlreadyActive = existing.any { it.id == idForDb && it.isActive }
+                
+                parsedList.add(ExtensionEntity(
+                    id = idForDb,
+                    name = "$cleanName [${lang.uppercase()}]",
+                    version = version,
+                    isActive = isAlreadyActive,
+                    isInstalled = isAlreadyInstalled,
+                    logoAsset = null
+                ))
+            }
+            if (parsedList.isNotEmpty()) {
+                db.extensionDao().insertExtensions(parsedList)
+            }
+            parsedList.size
+        } catch (e: Exception) {
+            e.printStackTrace()
+            -1
+        }
+    }
+
     // --- Global Search System ---
     suspend fun globalSearch(query: String): List<Manga> = withContext(Dispatchers.IO) {
         val installedIds = getInstalledPluginIds()
         val deferrals = installedIds.map { id ->
             async {
                 try {
-                    val plugin = pluginManager.getPlugin(id)
+                    val plugin = getPlugin(id)
                     plugin?.search(query) ?: emptyList()
                 } catch (e: Exception) {
                     emptyList()
@@ -46,7 +102,7 @@ class MangaRepository(private val db: AppDatabase) {
 
     suspend fun searchSpecificSource(sourceId: String, query: String): List<Manga> = withContext(Dispatchers.IO) {
         try {
-            val plugin = pluginManager.getPlugin(sourceId)
+            val plugin = getPlugin(sourceId)
             plugin?.search(query) ?: emptyList()
         } catch (e: Exception) {
             emptyList()
@@ -65,7 +121,7 @@ class MangaRepository(private val db: AppDatabase) {
 
     suspend fun getMangaDetails(id: String, sourceId: String): MangaDetails = withContext(Dispatchers.IO) {
         // Fetch from source plugin
-        val plugin = pluginManager.getPlugin(sourceId)
+        val plugin = getPlugin(sourceId)
         val details = plugin?.getDetails(id) ?: MangaDetails(id, "Unknown Title", "Unknown Author", "", "", "Unknown", emptyList(), sourceId)
         
         // Cache manga in local DB if needed (or keep details in a cache)
@@ -130,7 +186,7 @@ class MangaRepository(private val db: AppDatabase) {
         }
 
     suspend fun fetchAndSyncChapters(mangaId: String, sourceId: String): List<Chapter> = withContext(Dispatchers.IO) {
-        val plugin = pluginManager.getPlugin(sourceId)
+        val plugin = getPlugin(sourceId)
         val sourceChapters = try {
             plugin?.getChapters(mangaId) ?: emptyList()
         } catch (e: Exception) {
@@ -180,7 +236,7 @@ class MangaRepository(private val db: AppDatabase) {
 
     // --- Reading Pages Getter ---
     suspend fun getPages(chapterId: String, sourceId: String): List<Page> = withContext(Dispatchers.IO) {
-        val plugin = pluginManager.getPlugin(sourceId)
+        val plugin = getPlugin(sourceId)
         plugin?.getPages(chapterId) ?: emptyList()
     }
 

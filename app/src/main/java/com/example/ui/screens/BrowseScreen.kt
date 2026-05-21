@@ -123,11 +123,22 @@ fun SourcesCatalogLayout(
     isSearching: Boolean
 ) {
     val installedExtensions = extensionsList.filter { it.isInstalled }
+    val tabIndex = remember(installedExtensions, selectedSourceId) {
+        val idx = if (selectedSourceId == null) 0 else installedExtensions.indexOfFirst { it.id == selectedSourceId } + 1
+        if (idx in 0..installedExtensions.size) idx else 0
+    }
+
+    var selectedIndexState by remember { mutableStateOf(0) }
+    LaunchedEffect(tabIndex, installedExtensions.size) {
+        if (tabIndex < 1 + installedExtensions.size) {
+            selectedIndexState = tabIndex
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Source Quick Filters
         ScrollableTabRow(
-            selectedTabIndex = if (selectedSourceId == null) 0 else installedExtensions.indexOfFirst { it.id == selectedSourceId } + 1,
+            selectedTabIndex = selectedIndexState.coerceIn(0, installedExtensions.size),
             edgePadding = 16.dp,
             divider = {},
             containerColor = Color.Transparent,
@@ -280,58 +291,201 @@ fun ExtensionsInstallerLayout(
     viewModel: MangaViewModel,
     extensionsList: List<ExtensionEntity>
 ) {
+    var extensionSearchQuery by remember { mutableStateOf("") }
+    
+    val filteredExtensions = remember(extensionsList, extensionSearchQuery) {
+        if (extensionSearchQuery.isBlank()) extensionsList
+        else extensionsList.filter { it.name.contains(extensionSearchQuery, ignoreCase = true) }
+    }
+
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize()
     ) {
         item {
-            Text(
-                text = "Available Source Extensions",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp)
+            var repoUrl by remember { mutableStateOf("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json") }
+            val isSyncing by viewModel.isSyncingRepo.collectAsState()
+            val syncMessage by viewModel.repoSyncMessage.collectAsState()
+
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "External Extension Repository",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Paste a Tachiyomi/Mihon compatible index.min.json repository link to load hundreds of scraper sources dynamically.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = repoUrl,
+                        onValueChange = { repoUrl = it },
+                        label = { Text("Repository JSON URL") },
+                        enabled = !isSyncing,
+                        shape = RoundedCornerShape(8.dp),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("repo_url_input")
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (isSyncing) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Syncing...", style = MaterialTheme.typography.bodySmall)
+                            }
+                        } else {
+                            Row {
+                                SuggestionChip(
+                                    onClick = { repoUrl = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json" },
+                                    label = { Text("Keiyoushi (Default)") }
+                                )
+                            }
+                        }
+                        
+                        Button(
+                            onClick = { viewModel.syncExtensionRepository(repoUrl) },
+                            enabled = !isSyncing && repoUrl.isNotBlank(),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("sync_repo_btn")
+                        ) {
+                            Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sync")
+                        }
+                    }
+
+                    syncMessage?.let { msg ->
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                .padding(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = msg,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(
+                                    onClick = { viewModel.clearRepoSyncMessage() },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Dismiss",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            OutlinedTextField(
+                value = extensionSearchQuery,
+                onValueChange = { extensionSearchQuery = it },
+                placeholder = { Text("Filter extensions by name...") },
+                leadingIcon = { Icon(imageVector = Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (extensionSearchQuery.isNotEmpty()) {
+                        IconButton(onClick = { extensionSearchQuery = "" }) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Clear")
+                        }
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .testTag("extension_store_search_input")
             )
         }
-        items(extensionsList, key = { it.id }) { ext ->
+
+        item {
+            val titleText = if (extensionSearchQuery.isNotBlank()) {
+                "Found ${filteredExtensions.size} Matches"
+            } else {
+                "Available Source Extensions (${filteredExtensions.size})"
+            }
+            Text(
+                text = titleText,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+        }
+
+        items(filteredExtensions, key = { it.id }) { ext ->
             ListItem(
                 headlineContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(ext.name, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.width(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            ext.name, 
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
                         SuggestionChip(
                             onClick = {},
-                            label = { Text("v${ext.version}") },
-                            modifier = Modifier.height(24.dp)
+                            label = { Text("v${ext.version}", style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.height(20.dp)
                         )
                     }
                 },
                 supportingContent = {
-                    Text(if (ext.isInstalled) "Installed & Ready" else "Available from central community repository")
+                    Text(if (ext.isInstalled) "Installed & Ready" else "Available from central repository")
                 },
                 leadingContent = {
                     Surface(
-                        color = when (ext.id) {
-                            "mangadex" -> Color(0xFFE67E22)
-                            "webtoons" -> Color(0xFF2ECC71)
-                            "mangakakalot" -> Color(0xFF3498DB)
-                            "comick" -> Color(0xFF9B59B6)
-                            else -> Color(0xFF95A5A6)
+                        color = when {
+                            ext.id == "mangadex" -> Color(0xFFE67E22)
+                            ext.id == "webtoons" -> Color(0xFF2ECC71)
+                            ext.id == "mangakakalot" -> Color(0xFF3498DB)
+                            ext.id == "comick" -> Color(0xFF9B59B6)
+                            ext.name.lowercase().contains("18+") -> Color(0xFFE74C3C)
+                            else -> Color(0xFF7F8C8D)
                         },
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.size(44.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = when (ext.id) {
-                                    "mangadex" -> Icons.Default.Dashboard
-                                    "webtoons" -> Icons.Default.Smartphone
-                                    "mangakakalot" -> Icons.Default.Book
-                                    "comick" -> Icons.Default.DynamicFeed
-                                    else -> Icons.Default.FolderOpen
-                                },
-                                contentDescription = null,
-                                tint = Color.White
+                            Text(
+                                text = ext.name.replace("Tachiyomi: ", "").take(1).uppercase(),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
                             )
                         }
                     }
@@ -339,7 +493,6 @@ fun ExtensionsInstallerLayout(
                 trailingContent = {
                     if (ext.isInstalled) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Active toggle switch
                             Switch(
                                 checked = ext.isActive,
                                 onCheckedChange = { viewModel.toggleExtensionActive(ext.id, it) },
@@ -365,7 +518,8 @@ fun ExtensionsInstallerLayout(
                             modifier = Modifier.testTag("extension_install_btn_${ext.id}"),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary
-                            )
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -373,7 +527,7 @@ fun ExtensionsInstallerLayout(
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text("Get")
                             }
                         }

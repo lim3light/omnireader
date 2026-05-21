@@ -3,13 +3,17 @@ package com.example.data.plugins
 import com.example.domain.SourcePlugin
 
 class PluginManager {
-    private val allPlugins = mapOf<String, SourcePlugin>(
+    private val allPlugins = mutableMapOf<String, SourcePlugin>(
         "mangadex" to MangaDexPlugin(),
         "webtoons" to WebtoonPlugin(),
         "mangakakalot" to MangaKakalotPlugin(),
         "comick" to ComicKPlugin(),
         "local" to LocalPlugin()
     )
+
+    fun registerPlugin(plugin: SourcePlugin) {
+        allPlugins[plugin.id] = plugin
+    }
 
     fun getPlugin(id: String): SourcePlugin? {
         return allPlugins[id]
